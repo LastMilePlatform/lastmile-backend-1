@@ -49,7 +49,7 @@ export class AuthService {
     };
   }
 
-  async loginWithGoogle(googleAccessToken: string) {
+  async loginWithGoogle(googleAccessToken: string, role?: UserRole) {
     const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${googleAccessToken}` },
     });
@@ -69,11 +69,15 @@ export class AuthService {
     });
 
     if (!user) {
+      if (!role) {
+        return { requiresRoleSelection: true as const };
+      }
+
       user = this.usersRepository.create({
         name: info.name ?? info.email,
         email: info.email,
         googleId: info.sub,
-        role: UserRole.DONOR,
+        role,
       });
       await this.usersRepository.save(user);
     } else if (!user.googleId) {
