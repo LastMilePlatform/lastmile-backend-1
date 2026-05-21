@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -13,6 +13,8 @@ import { UsersModule } from './modules/users/users.module';
 import { EventsModule } from './modules/events/events.module';
 import { CampaignsModule } from './modules/campaigns/campaigns.module';
 import { DonationsModule } from './modules/donations/donations.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
+import { HttpMetricsMiddleware } from './modules/metrics/http-metrics.middleware';
 
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { DonationsModule } from './modules/donations/donations.module';
     EventsModule,
     CampaignsModule,
     DonationsModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -37,4 +40,8 @@ import { DonationsModule } from './modules/donations/donations.module';
     { provide: APP_GUARD, useClass: RequestSigningGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(HttpMetricsMiddleware).forRoutes('*');
+  }
+}
