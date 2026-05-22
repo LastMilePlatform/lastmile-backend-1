@@ -1,0 +1,197 @@
+# =============================================================================
+# LastMile – Docker Compose (Sprint 2: Disponibilidad + Escalabilidad)
+#
+# Arquitectura distribuida:
+#   nginx          → balanceador de carga (puerto 80)
+#   backend1_1/2   → 2 instancias de backend-1 (escalado horizontal)
+#   backend2       → backend-2 (subastas, logística, chat)
+#   backend_ws_1/2 → 2 instancias WebSocket con Redis adapter
+#   postgres       → base de datos compartida
+#   redis          → adapter de Socket.IO para sincronización entre instancias WS
+#
+# Uso:
+#   1. Copia .env.example a .env y rellena los valores reales
+#   2. docker compose up --build
+#   3. La app queda disponible en http://localhost
+# =============================================================================
+
+services:
+
+  # ── Balanceador de carga ───────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend1_1
+      - backend1_2
+      - backend2
+      - backend_ws_1
+      - backend_ws_2
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Backend 1 – Instancia A (identity, campaigns, donations, events) ───────
+  backend1_1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-lastmile}
+      DB_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+      DB_NAME: ${DB_NAME:-lastmile_db}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      REQUEST_SIGNING_SECRET: ${REQUEST_SIGNING_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Backend 1 – Instancia B (escalado horizontal) ─────────────────────────
+  backend1_2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-lastmile}
+      DB_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+      DB_NAME: ${DB_NAME:-lastmile_db}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      REQUEST_SIGNING_SECRET: ${REQUEST_SIGNING_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Backend 2 (auctions, products, logistics, notifications, chat) ─────────
+  backend2:
+    build:
+      context: ../lastmile-backend-2
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3002
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-lastmile}
+      DB_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+      DB_NAME: ${DB_NAME:-lastmile_db}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      REQUEST_SIGNING_SECRET: ${REQUEST_SIGNING_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Backend WS – Instancia A (WebSocket / Socket.IO realtime) ─────────────
+  backend_ws_1:
+    build:
+      context: ../lastmile-backend-ws
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3003
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-lastmile}
+      DB_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+      DB_NAME: ${DB_NAME:-lastmile_db}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      REQUEST_SIGNING_SECRET: ${REQUEST_SIGNING_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+      # Redis adapter: permite sincronizar eventos WS entre las 2 instancias
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Backend WS – Instancia B (escalado horizontal con Redis adapter) ───────
+  backend_ws_2:
+    build:
+      context: ../lastmile-backend-ws
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3003
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-lastmile}
+      DB_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+      DB_NAME: ${DB_NAME:-lastmile_db}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      REQUEST_SIGNING_SECRET: ${REQUEST_SIGNING_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-lastmile_db}
+      POSTGRES_USER: ${DB_USERNAME:-lastmile}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-lastmile_pass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-lastmile} -d ${DB_NAME:-lastmile_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+  # ── Redis (Socket.IO Redis adapter) ───────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped
+    networks:
+      - lastmile-net
+
+# ── Volúmenes ──────────────────────────────────────────────────────────────
+volumes:
+  pgdata:
+
+# ── Red interna ────────────────────────────────────────────────────────────
+networks:
+  lastmile-net:
+    driver: bridge
